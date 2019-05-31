@@ -17,6 +17,8 @@
 import groovy.json.JsonBuilder
 import groovy.json.JsonSlurper
 import java.net.HttpURLConnection
+import java.time.format.DateTimeFormatter
+import java.time.Instant
 import java.util.regex.Pattern
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -78,6 +80,9 @@ class Globals {
         ],
         slack: [
             description: "A POST formatted specifically for Slack", formatter: new SlackFormatter ( )
+        ],
+        dockerRegistry: [
+            description: "Formatted to emulate docker registry webhooks", formatter: new DockerRegistryFormatter ( )
         ]
     ]
 
@@ -341,6 +346,38 @@ class SlackFormatter {
 }
 
 /**
+ * Docker Registry Formatter
+ * example payload: https://github.com/docker/distribution/blob/v2.7.1/notifications/event_test.go#L15
+ *
+ * NOTE: this only includes the mininum structure required to trigger the jenkins docker registry trigger plugin
+ * https://github.com/jenkinsci/dockerhub-notification-plugin/blob/dockerhub-notification-2.4.0/src/main/java/org/jenkinsci/plugins/registry/notification/webhook/dockerregistry/DockerRegistryWebHookPayload.java#L46
+ */
+class DockerRegistryFormatter {
+    def format(String event, JsonBuilder data) {
+        def builder = new JsonBuilder()
+        if (!event.equals('docker.tagCreated')) {
+            builder.error "unsupported event type: $event"
+            return builder
+        }
+        builder {
+            events([{
+                timestamp DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(data.content.event.created))
+                action "push"
+                target {
+                    repository data.content.docker.image
+                    tag data.content.docker.tag
+                    url "https://${data.content.docker.registry}/v2/${data.content.docker.image}/manifests/sha256:${data.content.event.checksumsInfo.sha256}"
+                }
+                request {
+                    host data.content.docker.registry
+                }
+            }])
+        }
+        return builder
+    }
+}
+
+/**
  * Adds some additional information to the data payload
  * @param data The original payload
  * @return The modified payload
@@ -359,7 +396,8 @@ def dockerDataDecorator(JsonBuilder data) {
         docker(
             [
                 "tag": tagName,
-                "image": imageName
+                "image": imageName,
+                "registry": "${data.content.repoKey}.${ctx.centralConfig.serverName}"
             ]
         )
         event data.content
