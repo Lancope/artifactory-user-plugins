@@ -16,6 +16,7 @@
 
 import groovy.json.JsonBuilder
 import groovy.json.JsonSlurper
+import java.net.HttpURLConnection
 import java.util.regex.Pattern
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -611,10 +612,10 @@ class WebHook {
             writer.write(content.getBytes("UTF-8"))
             writer.flush()
             def postRC = post.getResponseCode()
-            def response = postRC
-            if (postRC.equals(200)) {
-                reader = post.inputStream
-                response = reader.text
+            reader = (postRC < HttpURLConnection.HTTP_BAD_REQUEST) ? post.inputStream : post.errorStream
+            def response = reader.text
+            if (postRC >= HttpURLConnection.HTTP_BAD_REQUEST) {
+                throw new Exception("unexpected response code: ${postRC}\n${response}")
             }
             return response
         } finally {
